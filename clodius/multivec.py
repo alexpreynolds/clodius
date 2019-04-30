@@ -7,10 +7,12 @@ import numpy as np
 import os
 import os.path as op
 import sys
+import json
 
 def bedfile_to_multivec(input_filenames, f_out,
-        bedline_to_chrom_start_end_vector, base_resolution,
-        has_header, chunk_size, row_infos=None):
+                        bedline_to_chrom_start_end_vector, base_resolution,
+                        has_header, chunk_size, 
+                        row_infos=None):
     '''
     Convert an epilogos bedfile to multivec format.
     '''
@@ -55,6 +57,7 @@ def bedfile_to_multivec(input_filenames, f_out,
             # the previous values
             print("len(batch:", len(batch), "batch_start_index", batch_start_index)
             f_out[prev_chrom][batch_start_index:batch_start_index+len(batch)] = np.array(batch)
+            print("shape of batch:", f_out[prev_chrom][batch_start_index:batch_start_index+len(batch)].shape)
 
             # we're starting a new chromosome so we start from the beginning
             curr_index = 0
@@ -63,7 +66,6 @@ def bedfile_to_multivec(input_filenames, f_out,
 
         prev_chrom = chrom
 
-        #print('parts', parts)
         #print('chrom:', chrom, start)
 
         data_start_index = start // base_resolution
@@ -98,6 +100,7 @@ def bedfile_to_multivec(input_filenames, f_out,
             # dump batch
             try:
                 f_out[chrom][batch_start_index:batch_start_index+len(batch)] = np.array(batch)
+                print("shape of batch:", f_out[chrom][batch_start_index:batch_start_index+len(batch)].shape)
             except TypeError as ex:
                 print("Error:", ex, file=sys.stderr)
                 print("Probably need to set the --num-rows parameter", file=sys.stderr)
@@ -107,13 +110,14 @@ def bedfile_to_multivec(input_filenames, f_out,
             batch_start_index = curr_index
             print("dumping batch:", chrom, batch_start_index)
 
-    #print('chrom', chrom)
+    print('chrom', chrom)
     f_out[chrom][batch_start_index:batch_start_index+len(batch)] = np.array(batch)
+    print("shape of batch:", f_out[chrom][batch_start_index:batch_start_index+len(batch)].shape)
 
 def create_multivec_multires(array_data, chromsizes,
-                    agg, starting_resolution=1,
-                    tile_size=1024, output_file='/tmp/my_file.multires',
-                    row_infos=None):
+                             agg, starting_resolution=1,
+                             tile_size=1024, output_file='/tmp/my_file.multires',
+                             row_infos=None, category_infos=None):
     '''
     Create a multires file containing the array data
     aggregated at multiple resolutions.
@@ -147,6 +151,7 @@ def create_multivec_multires(array_data, chromsizes,
     # store some metadata
     f.create_group('info')
     f['info'].attrs['tile-size'] = tile_size
+    f['info'].attrs['category-infos'] = json.dumps(category_infos).encode('utf-8')
 
     f.create_group('resolutions')
     f.create_group('chroms')
@@ -168,7 +173,12 @@ def create_multivec_multires(array_data, chromsizes,
 
     # add the chromosome information
     if row_infos is not None:
-        f['resolutions'][str(curr_resolution)].attrs.create('row_infos', row_infos)
+        try:
+            #f['resolutions'][str(curr_resolution)].attrs.create('row_infos', json.dumps(row_infos).encode('utf-8'))
+            f['resolutions'][str(curr_resolution)].attrs.create('row_infos', row_infos)
+        except TypeError:
+            sys.stderr.write('TypeError: {}\n'.format(row_infos))
+            sys.exit(-1)
 
     f['resolutions'][str(curr_resolution)].create_group('chroms')
     f['resolutions'][str(curr_resolution)].create_group('values')
@@ -184,14 +194,14 @@ def create_multivec_multires(array_data, chromsizes,
             print("Missing chrom {} in input file".format(chrom), file=sys.stderr)
             continue
 
-        # print("creating new dataset")
+        print("creating new dataset")
         f['resolutions'][str(curr_resolution)]['values'].create_dataset(str(chrom), array_data[chrom].shape, compression='gzip')
         standard_chunk_size = 1e5
         start = 0
         chrom_data = f['resolutions'][str(curr_resolution)]['values'][chrom]
 
         chunk_size = int(min(standard_chunk_size, len(chrom_data)))
-        #print("array_data.shape", array_data[chrom].shape)
+        print("array_data.shape", array_data[chrom].shape)
 
         while start < len(chrom_data):
             chrom_data[start:start + chunk_size] = array_data[chrom][start:start+chunk_size]    # see above section
@@ -202,7 +212,7 @@ def create_multivec_multires(array_data, chromsizes,
     # that need to be performed so that the entire extent of
     # the dataset fits into one tile
     total_length = sum(lengths)
-    # print("total_length:", total_length, "tile_size:", tile_size, "starting_resolution:", starting_resolution)
+    print("total_length:", total_length, "tile_size:", tile_size, "starting_resolution:", starting_resolution)
     max_zoom = math.ceil(math.log(total_length / (tile_size * starting_resolution) ) / math.log(2))
 
     # we're going to go through and create the data for the different
@@ -217,6 +227,7 @@ def create_multivec_multires(array_data, chromsizes,
 
         # add information about each of the rows
         if row_infos is not None:
+            #f['resolutions'][str(curr_resolution)].attrs.create('row_infos', json.dumps(row_infos).encode('utf-8'))
             f['resolutions'][str(curr_resolution)].attrs.create('row_infos', row_infos)
 
         f['resolutions'][str(curr_resolution)].create_group('chroms')
@@ -247,8 +258,8 @@ def create_multivec_multires(array_data, chromsizes,
 
             while start < len(chrom_data):
                 old_data = f['resolutions'][str(prev_resolution)]['values'][chrom][start:start+chunk_size]
-                #print("prev_resolution:", prev_resolution)
-                #print("old_data.shape", old_data.shape)
+                print("prev_resolution:", prev_resolution)
+                print("old_data.shape", old_data.shape)
 
                 # this is a sort of roundabout way of calculating the
                 # shape of the aggregated array, but all its doing is
@@ -268,11 +279,10 @@ def create_multivec_multires(array_data, chromsizes,
                 #print("old_data.shape", old_data.shape)
                 new_data = agg(old_data)
 
-                '''
                 print("zoom_level:", max_zoom - 1 - i,
                       "resolution:", curr_resolution,
                       "new_data length", len(new_data))
-                '''
+
                 f['resolutions'][str(curr_resolution)]['values'][chrom][int(start/2):int(start/2+chunk_size/2)] = new_data
                 start += int(min(standard_chunk_size, len(chrom_data) - start))
 
