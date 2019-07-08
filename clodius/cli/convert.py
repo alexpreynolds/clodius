@@ -354,6 +354,9 @@ def _bedgraph_to_multivec(
         elif method == 'sum':
             agg = lambda x: x.T.reshape((x.shape[1], -1, 2)).sum(axis=2).T
 
+        elif method == 'nansum':
+            agg = lambda x: np.nansum(x.T.reshape((x.shape[1], -1, 2))).T
+
         elif method == 'mode':
             def agg(x):
                 rows = x.shape[0]
@@ -397,21 +400,21 @@ def _bedgraph_to_multivec(
                     if l < 0: l = 0
                     if r > (rows - 1): r = (rows - 1)
                     y = x[l:r].T
-
-                    z = np.zeros(cols).astype(int)
-                    for e_idx, e in enumerate(y):
+                    try:
+                        z = np.zeros(cols).astype(int)
+                    except IndexError:
+                        sys.stderr.write('IndexError discovered in background_freqs\n')
+                        sys.stderr.write('{}\n'.format(cols))
+                    for e_idx, e in enumerate(y, 0):
+                        #sys.stderr.write('Debug: e_idx {}\n'.format(e_idx))
                         try:
-                            row_id = row_infos[e_idx].decode().split('|')[0].rstrip() # e.g., sample name ("E017 | IMR90 fetal lung fibroblasts", etc.)
-                            #row_id = row_infos[e_idx]['name']
-                            freqs = background_freqs[assembly][category_count][row_id]
-                        except KeyError:
-                            sys.stderr.write('KeyError discovered in background_freqs\n')
-                            sys.stderr.write('{}\n'.format(row_infos[e_idx]))
-                            sys.stderr.write('{}\n'.format(row_id))
-                            sys.stderr.write('{}\n'.format(assembly))
-                            sys.stderr.write('{}\n'.format(category_count))
-                            sys.stderr.write('{}\n'.format(background_freqs[assembly][category_count]))
+                            row_str = row_infos[e_idx].decode('utf-8')
+                        except (KeyError, IndexError) as err:
+                            sys.stderr.write('KeyError or IndexError discovered in background_freqs [{}]\n'.format(err))
+                            sys.stderr.write('Check formatting of background_freqs parameter\n')
                             sys.exit(-1)
+                        row_id = row_str.split('|')[0].rstrip() # e.g., sample name ("E017 | IMR90 fetal lung fibroblasts" -> "E017", etc.)
+                        freqs = background_freqs[assembly][category_count][row_id]
                         min_freq = 1
                         min_freq_idx = -1
                         for v_idx, v in enumerate(e):
@@ -555,7 +558,7 @@ def _bedgraph_to_multivec(
 @click.option(
     '--method',
     help='The method used to aggregate values (e.g. sum, average...)',
-    type=click.Choice(['sum', 'logsumexp', 'mode', 'background-freqs']),
+    type=click.Choice(['sum', 'nansum', 'logsumexp', 'mode', 'background-freqs']),
     default='sum'
 )
 @click.option(
