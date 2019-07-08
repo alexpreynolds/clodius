@@ -1,3 +1,9 @@
+Update
+
+- Added 'nansum' aggregation method to treat `np.nan`-equivalent values as zeros during aggregation (by contrast, use of the 'sum' method promotes NaNs to progressively higher resolutions, which removes interesting/high-value signal).
+- Added 'categorical' input format for aggregating categorical data (such as input matrices used to generate epilogos, for instance, where each cell of the matrix is one of `N` epigenetic chromatin state labels for a particular combination of biosample and 200 nt bin along the specified genome).
+- Added 'mode', and 'background-freqs' aggregation methods for categorical data. The 'mode' method promotes the most frequent label along `--bin-span` spanned bins. The 'background-freqs' method uses a table of background frequencies to promote the least-frequent ("most interesting") state label among the bin-span being aggregated.
+
 v0.10.12
 
 - Simplified density tiles generator.
