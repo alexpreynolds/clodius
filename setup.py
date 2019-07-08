@@ -1,36 +1,37 @@
-from setuptools import setup, find_packages
-from distutils import sysconfig
-
-#from distutils.extension import Extension
-
-#from Cython.Distutils import build_ext
-#from Cython.Build import cythonize
+from setuptools import setup
+import os
+import io
 
 
-print("packages:", find_packages())
- 
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def read(*parts, **kwargs):
+    filepath = os.path.join(HERE, *parts)
+    encoding = kwargs.pop('encoding', 'utf-8')
+    with io.open(filepath, encoding=encoding) as fh:
+        text = fh.read()
+    return text
+
+
+def get_requirements(path):
+    content = read(path)
+    return [
+        req
+        for req in content.split("\n")
+        if req != '' and not req.startswith('#')
+    ]
+
+
 setup_requires = [
-        'numpy',
-        ]
+    'numpy',
+]
 
-install_requires = [
-        'numpy',
-        'negspy',
-        'pysam',
-        'dask',
-        'requests',
-        'h5py',
-        'pandas',
-        'slugid',
-        'sortedcontainers',
-        'nose',
-        'cooler==0.7.11',
-        'pybbi==0.2.0',
-        'Click']
+install_requires = get_requirements('requirements.txt')
 
 setup(
     name='clodius',
-    version='0.10.3',
+    version='0.10.13',
     description='Tile generation for big data',
     author='Peter Kerpedjiev',
     author_email='pkerpedjiev@gmail.com',
@@ -38,9 +39,12 @@ setup(
     packages=['clodius', 'clodius.cli', 'clodius.tiles'],
     setup_requires=setup_requires,
     install_requires=install_requires,
+    scripts=[
+        'scripts/tsv_to_mrmatrix.py'
+    ],
     entry_points={
         'console_scripts': [
-            'clodius = clodius.cli.aggregate:cli',
-            ]
-        }
+            'clodius = clodius.cli.aggregate:cli'
+        ]
+    }
 )

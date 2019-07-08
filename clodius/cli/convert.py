@@ -2,7 +2,6 @@ import click
 from . import cli
 import clodius.chromosomes as cch
 import clodius.multivec as cmv
-import gzip
 import h5py
 import math
 import negspy.coordinates as nc
@@ -15,6 +14,7 @@ import json
 import sys
 
 import ast
+
 
 def epilogos_bedline_to_vector(bedlines, row_infos=None):
     '''
@@ -39,11 +39,12 @@ def epilogos_bedline_to_vector(bedlines, row_infos=None):
     array_val = sorted(ast.literal_eval(array_str), key=lambda x: x[1])
     states = [v[0] for v in array_val]
 
-    chrom=parts[0]
-    start=int(parts[1])
-    end=int(parts[2])
+    chrom = parts[0]
+    start = int(parts[1])
+    end = int(parts[2])
 
     return (chrom, start, end, states)
+
 
 def states_bedline_to_vector(bedlines, states_dic):
     '''
@@ -68,17 +69,18 @@ def states_bedline_to_vector(bedlines, states_dic):
     (e.g. chrom = "chr1", start = 1000, end = 2000, states_vector = [1,0,0,0])
     '''
     # we support passing in multiple bed files for multivec creation from
-    # # other file types, but this one only supports a single file so just
-    # # assume that a single file is passed in
+    # other file types, but this one only supports a single file so just
+    # assume that a single file is passed in
     bedline = bedlines[0]
 
     parts = bedline.decode('utf8').strip().split('\t')
-    chrom=parts[0]
-    start=int(parts[1])
-    end=int(parts[2])
-    state= states_dic[parts[3].encode('utf8')]
+    chrom = parts[0]
+    start = int(parts[1])
+    end = int(parts[2])
+    state = states_dic[parts[3]]
 
-    states_vector = [ 1 if index == state else 0 for index in range(len(states_dic))]
+    states_vector = [1 if index ==
+                     state else 0 for index in range(len(states_dic))]
 
     return (chrom, start, end, states_vector)
 
@@ -183,6 +185,7 @@ def mode(ndarray, axis=0):
     index = np.ogrid[slices]
     index.insert(axis, np.argmax(counts, axis=axis))
     return sort[index], counts[index]
+    
 
 @cli.group()
 def convert():
@@ -191,6 +194,7 @@ def convert():
     resolutions.
     '''
     pass
+
 
 def _bedgraph_to_multivec(
         filepaths,
@@ -223,7 +227,8 @@ def _bedgraph_to_multivec(
         temp_file = op.join(td, 'temp.mv5')
         f_out = h5py.File(temp_file, 'w')
 
-        (chrom_info, chrom_names, chrom_sizes) = cch.load_chromsizes(chromsizes_filename, assembly)
+        (chrom_info, chrom_names, chrom_sizes) = cch.load_chromsizes(
+            chromsizes_filename, assembly)
 
         if row_infos_filename is not None:
             row_infos = []
@@ -264,24 +269,27 @@ def _bedgraph_to_multivec(
             start_set = set()
             end_set = set()
             all_vector = []
- 
+
             for bedline in bedlines:
                 parts = bedline.strip().split()
-                chrom = parts[chrom_col-1]
-                start = int(parts[from_pos_col-1])
-                end = int(parts[to_pos_col-1])
-                vector = [float(f) if not f == 'NA' else np.nan 
-                        for f in parts[value_col-1:value_col-1+num_rows]]                
+                chrom = parts[chrom_col - 1]
+                start = int(parts[from_pos_col - 1])
+                end = int(parts[to_pos_col - 1])
+                vector = [float(f) if not f == 'NA' else np.nan
+                          for f in parts[value_col - 1:value_col - 1 + num_rows]]
                 chrom_set.add(chrom)
                 start_set.add(start)
                 end_set.add(end)
 
                 if len(chrom_set) > 1:
-                    raise ValueError("Chromosomes don't match in these lines:", bedlines)
+                    raise ValueError(
+                        "Chromosomes don't match in these lines:", bedlines)
                 if len(start_set) > 1:
-                    raise ValueError("Start positions don't match in these lines:", bedlines)
+                    raise ValueError(
+                        "Start positions don't match in these lines:", bedlines)
                 if len(end_set) > 1:
-                    raise ValueError("End positions don't match in these lines:", bedlines)
+                    raise ValueError(
+                        "End positions don't match in these lines:", bedlines)
                 all_vector += vector
 
             return (list(chrom_set)[0],
@@ -291,14 +299,16 @@ def _bedgraph_to_multivec(
 
         if format == 'epilogos':
             cmv.bedfile_to_multivec(filepaths, f_out, epilogos_bedline_to_vector,
-                                    starting_resolution, has_header, chunk_size)
+                                    starting_resolution, has_header, chunk_size, num_rows)
         elif format == 'states':
-            assert(row_infos != None), "A row_infos file must be provided for --format = 'states' "
-            states_dic = {row_infos[x]:x for x in range(len(row_infos))}
+            assert(
+                row_infos is not None), "A row_infos file must be provided for --format = 'states' "
+            states_names = [lne.decode('utf8').split('\t')[0]
+                            for lne in row_infos]
+            states_dic = {states_names[x]: x for x in range(len(row_infos))}
 
             cmv.bedfile_to_multivec(filepaths, f_out, states_bedline_to_vector,
-                                    starting_resolution, has_header, chunk_size, 
-                                    states_dic)
+                                    starting_resolution, has_header, chunk_size, num_rows, states_dic)
         elif format == 'categorical':
             assert(row_infos != None), "A row_infos file must be provided for --format = 'categorical' "
             assert(category_infos != None), "A category_infos file must be provided for --format = 'categorical' "
@@ -306,7 +316,7 @@ def _bedgraph_to_multivec(
                                     starting_resolution, has_header, chunk_size)
         else:
             cmv.bedfile_to_multivec(filepaths, f_out, bedline_to_chrom_start_end_vector,
-                                    starting_resolution, has_header, chunk_size)
+                                    starting_resolution, has_header, chunk_size, num_rows)
 
         f_out.close()
         tf = temp_file
@@ -320,12 +330,12 @@ def _bedgraph_to_multivec(
         if op.exists(output_file):
             os.remove(output_file)
 
-        if method =='logsumexp':
+        if method == 'logsumexp':
             def agg(x):
                 # newshape = (x.shape[2], -1, 2)
                 # b = x.T.reshape((-1,))
 
-                a = x.T.reshape((x.shape[1],-1,2))
+                a = x.T.reshape((x.shape[1], -1, 2))
 
                 # this is going to be an odd way to get rid of nan
                 # values
@@ -336,9 +346,10 @@ def _bedgraph_to_multivec(
                 NAN_THRESHOLD_NUM = SMALL_NUM / 100
 
                 if np.nanmin(na) < NAN_THRESHOLD_NUM:
-                    raise ValueError("Error removing nan's when running logsumexp aggregation")
+                    raise ValueError(
+                        "Error removing nan's when running logsumexp aggregation")
 
-                na[np.isnan(na)] = SMALL_NUM;
+                na[np.isnan(na)] = SMALL_NUM
                 na = na.reshape(orig_shape)
                 res = sm.logsumexp(a, axis=2).T
 
@@ -440,6 +451,7 @@ def _bedgraph_to_multivec(
                                      output_file=output_file,
                                      row_infos=row_infos,
                                      category_infos=category_infos)
+
 
 @convert.command()
 @click.argument(
