@@ -67,7 +67,7 @@ def test_load_multivec_tiles():
     # TODO: Make assertions about result
 
 
-def test_states_format_befile_to_multivec():
+def test_states_format_bedfile_to_multivec():
     runner = clt.CliRunner()
     input_file = op.join(testdir, 'sample_data',
                          'states_format_input_testfile.bed.gz')

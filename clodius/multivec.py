@@ -25,7 +25,7 @@ def bedfile_to_multivec(input_filenames, f_out,
         if op.splitext(input_filename)[1] == '.gz':
             files += [gzip.open(input_filename, 'r')]
         else:
-            files += [open(input_filename, 'r')]
+            files += [open(input_filename, 'r', encoding='utf-8')]
 
     FILL_VALUE = np.nan
 
@@ -47,11 +47,10 @@ def bedfile_to_multivec(input_filenames, f_out,
 
     for _, lines in enumerate(zip(*files)):
         # Identifies bedfile headers and ignore them
-        if lines[0].startswith('browser') or lines[0].startswith('track'):
-            continue
+        #if lines[0].startswith('browser') or lines[0].startswith('track'):
+        #    continue
 
-        chrom, start, end, vector = bedline_to_chrom_start_end_vector(
-            lines, row_infos)
+        chrom, start, end, vector = bedline_to_chrom_start_end_vector(lines, row_infos)
         # if vector[0] > 0 or vector[1] > 0:
 
         if len(vector) < len(lines) * num_rows:
@@ -302,7 +301,13 @@ def create_multivec_multires(array_data, chromsizes,
                 # print("shape:", old_data.shape)
                 # actually sum the adjacent elements
                 # print("old_data.shape", old_data.shape)
-                new_data = agg(old_data)
+                '''
+                If the aggregation function accepts the zoom level as an argument, issue it
+                '''
+                try:
+                  new_data = agg(old_data, i)
+                except TypeError:
+                  new_data = agg(old_data)
 
                 print("zoom_level:", max_zoom - 1 - i,
                       "resolution:", curr_resolution,

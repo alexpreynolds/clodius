@@ -18,13 +18,42 @@ import ast
 
 def epilogos_bedline_to_vector(bedlines, row_infos=None):
     '''
-    Convert a line from an epilogos bedfile to vector format.
+    Convert a line from a scores.txt-formatted epilogos bedfile 
+    to vector format.
 
     Parameters
     -----------
     bedline: [string,....]
         A line from a bedfile broken up into its constituent parts
-        (e.g. ["chr1", "1000", "2000", "[1,2,34,5]"])
+        (e.g. ["chr1", "1000", "2000", "1", "2", "3.4", "5", ..., "0"])
+
+    Returns
+    -------
+    An array containing the values associated with that line
+    '''
+    bedline = bedlines[0]
+    parts = bedline.decode('utf8').strip().split('\t')
+
+    chrom = parts[0]
+    start = int(parts[1])
+    end = int(parts[2])
+    
+    # extract the state values e.g. [...,[0,14],[0.56,15]]
+    states = [float(x) for x in parts[3:]]
+
+    return (chrom, start, end, states)
+
+
+def qcat_bedline_to_vector(bedlines, row_infos=None):
+    '''
+    Convert a line from an old qcat-formatted epilogos bedfile 
+    to vector format.
+
+    Parameters
+    -----------
+    bedline: [string,....]
+        A line from a bedfile broken up into its constituent parts
+        (e.g. ["chr1", "1000", "2000", "1234,qcat:[ [0,1], [0,2], [0,3], [0,4], [0,8], [0,9], [0,10], [0,11], [0,12], [0,13], [0,14], [0,15], [0.4309,7], [0.7682,6], [6.747,5] ]"])
 
     Returns
     -------
@@ -84,6 +113,39 @@ def states_bedline_to_vector(bedlines, states_dic):
 
     return (chrom, start, end, states_vector)
 
+def continuous_bedline_to_vector(bedlines, row_infos=None):
+    '''
+    Convert a line from a continuous bedfile to vector format.
+
+    One example of continous data includes DNaseI density signal for 
+    visualizing a 2D matrix of samples and bins.
+
+    In this example, rows are an ordered list of samples.
+
+    Parameters
+    -----------
+    bedline: [string,....]
+        A line from a bedfile broken up into its constituent parts
+        (e.g. ["chr1", "1000", "2000", "[1,2,3,4,5]"])
+
+    Returns
+    -------
+    An array containing the values associated with that line
+    '''
+    bedline = bedlines[0]
+    parts = bedline.decode('utf8').strip().split('\t')
+    # extract the signal values e.g. [3.1,12.0,1.123,...,0.0]
+    array_str = parts[3]
+
+    # signals are a literal evaluation of the array string
+    signals = ast.literal_eval(array_str)
+
+    chrom = parts[0]
+    start = int(parts[1])
+    end = int(parts[2])
+
+    return (chrom, start, end, signals)
+
 def categorical_bedline_to_vector(bedlines, row_infos=None):
     '''
     Convert a line from a categorical bedfile to vector format.
@@ -125,9 +187,10 @@ def categorical_bedline_to_vector(bedlines, row_infos=None):
 
     return (chrom, start, end, categories)
 
-def mode(ndarray, axis=0):
+def mode(ndarray, axis=0, nan_value=None, nan_value_threshold=None):
     '''
     A faster mode than scipy.stats.mode
+    
     https://stackoverflow.com/a/35674754/19410
     '''
     # Check inputs
@@ -183,9 +246,48 @@ def mode(ndarray, axis=0):
     slices = [slice(None, i) for i in sort.shape]
     del slices[axis]
     index = np.ogrid[slices]
-    index.insert(axis, np.argmax(counts, axis=axis))
-    return sort[index], counts[index]
-    
+    index.insert(axis, np.argmax(counts, axis=axis)) 
+    if not nan_value:
+      return sort[index], counts[index]      
+    else:
+      '''
+      If a nan_value is specified, then we want to try to avoid selecting 
+      this as the aggregated value. The values we want to propagate up to 
+      the next zoom level should represent non-NaN values, ideally.
+      
+      To do this, we generate a k-th value set of indices. We then replace 
+      any sort[index] values that are NaN-equivalent with the second-th 
+      index value.
+      '''
+      nan_value = int(nan_value)
+      nan_value_threshold = int(nan_value_threshold)
+      nan_indices_in_sort_values = np.where(sort[index] == nan_value)[0]
+      '''
+      If nan_value_threshold is specified, we allow promotion of a NaN if
+      that threshold is met. This preserves structure of NaNs over, for 
+      example, telomeric, centromeric, or other unmappable regions where
+      we would expect NaNs to be normally present.
+      '''
+      if nan_indices_in_sort_values.size == 0:
+        return sort[index], counts[index]
+      else:
+        if nan_value_threshold:
+          nan_indices_in_sort_values = np.where(counts[index][nan_indices_in_sort_values] >= nan_value_threshold)[0]
+        if nan_indices_in_sort_values.size == 0:
+          return sort[index], counts[index]
+        fixed_sort = sort[index]
+        fixed_counts = counts[index]
+        fixed_slice = ndarray[nan_indices_in_sort_values]
+        try:
+          idx = np.argpartition(fixed_slice, np.size(fixed_slice, 0))
+          col_idx = np.take(idx, 0, axis=1)
+          row_idx = np.arange(col_idx.shape[0])
+          replacements = fixed_slice[row_idx, col_idx]
+          np.put(fixed_sort, nan_indices_in_sort_values, replacements)
+          np.put(fixed_counts, nan_indices_in_sort_values, -1)
+          return fixed_sort[index], fixed_counts[index]
+        except (ValueError, IndexError):
+          return sort[index], counts[index]
 
 @cli.group()
 def convert():
@@ -207,6 +309,8 @@ def _bedgraph_to_multivec(
         has_header,
         chunk_size,
         nan_value,
+        nan_value_threshold,
+        decrease_mode_bin_span_per_zoom_level,
         chromsizes_filename,
         starting_resolution,
         num_rows,
@@ -300,6 +404,9 @@ def _bedgraph_to_multivec(
         if format == 'epilogos':
             cmv.bedfile_to_multivec(filepaths, f_out, epilogos_bedline_to_vector,
                                     starting_resolution, has_header, chunk_size, num_rows)
+        elif format == 'qcat':
+            cmv.bedfile_to_multivec(filepaths, f_out, qcat_bedline_to_vector,
+                                    starting_resolution, has_header, chunk_size, num_rows)
         elif format == 'states':
             assert(
                 row_infos is not None), "A row_infos file must be provided for --format = 'states' "
@@ -309,11 +416,15 @@ def _bedgraph_to_multivec(
 
             cmv.bedfile_to_multivec(filepaths, f_out, states_bedline_to_vector,
                                     starting_resolution, has_header, chunk_size, num_rows, states_dic)
+        elif format == 'continuous':
+            assert(row_infos != None), "A row_infos file must be provided for --format = 'continuous' "
+            cmv.bedfile_to_multivec(filepaths, f_out, continuous_bedline_to_vector,
+                                    starting_resolution, has_header, chunk_size, num_rows)
         elif format == 'categorical':
             assert(row_infos != None), "A row_infos file must be provided for --format = 'categorical' "
             assert(category_infos != None), "A category_infos file must be provided for --format = 'categorical' "
             cmv.bedfile_to_multivec(filepaths, f_out, categorical_bedline_to_vector,
-                                    starting_resolution, has_header, chunk_size)
+                                    starting_resolution, has_header, chunk_size, num_rows)
         else:
             cmv.bedfile_to_multivec(filepaths, f_out, bedline_to_chrom_start_end_vector,
                                     starting_resolution, has_header, chunk_size, num_rows)
@@ -368,13 +479,26 @@ def _bedgraph_to_multivec(
         elif method == 'nansum':
             agg = lambda x: np.nansum(x.T.reshape((x.shape[1], -1, 2))).T
 
+        elif method == 'mean':
+            agg = lambda x: x.T.reshape((x.shape[1], -1, 2)).mean(axis=2).T
+
         elif method == 'mode':
-            def agg(x):
+            def agg(x, zoom_level=None):
                 rows = x.shape[0]
                 cols = x.shape[1]
-                left_span = math.floor(bin_span/2)
-                right_span = math.ceil(bin_span/2)
-                assert(left_span + right_span == bin_span)
+                '''
+                The mode can apply a wide bin width at low zoom levels, but this
+                bin width can be too aggressive at high zoom levels. So at each 
+                zoom level, we remove some number of bins from the span, and we
+                make sure it is a positive, non-zero value.
+                '''
+                _bin_span = bin_span
+                if zoom_level:
+                    _bin_span = bin_span - (zoom_level * decrease_mode_bin_span_per_zoom_level)
+                _bin_span = _bin_span if _bin_span > 1 else 1
+                left_span = math.floor(_bin_span / 2)
+                right_span = math.ceil(_bin_span / 2)
+                assert(left_span + right_span == _bin_span)
                 res = np.zeros((int(x.shape[0]/2), x.shape[1]))
                 ri = 0
                 # step every second row, take the mode (except at edges)
@@ -387,7 +511,7 @@ def _bedgraph_to_multivec(
                     if y.shape[1] % 2 == 0:
                         res[ri,] = y.T[y.shape[1]-1,]
                     else:
-                        res[ri,] = mode(y, axis=1)[0]
+                        res[ri,] = mode(y, 1, nan_value, nan_value_threshold)[0]
                     assert(res[ri,].shape[0] == cols)
                     ri += 1
                 return res
@@ -519,6 +643,18 @@ def _bedgraph_to_multivec(
     default=None
 )
 @click.option(
+    '--nan-value-threshold',
+    help='When used with the mode aggregation function, this number of NaN values are allowed to be promoted',
+    type=int,
+    default=None
+)
+@click.option(
+    '--decrease-mode-bin-span-per-zoom-level',
+    help='When used with the mode aggregation function, the bin span is reduced by specified units per zoom level',
+    type=int,
+    default=2
+)
+@click.option(
     '--chromsizes-filename',
     help="A file containing chromosome sizes and order",
     default=None
@@ -536,10 +672,12 @@ def _bedgraph_to_multivec(
 )
 @click.option(
     '--format',
-    type=click.Choice(['default', 'epilogos', 'states', 'categorical']),
-    help= "'default':chr start end state1_value state2_value, etc; "
-    "'epilogos': chr start end [[state1_value, state1_num],[state2_value, state2_num],[etc]]; "
+    type=click.Choice(['default', 'epilogos', 'states', 'continuous', 'categorical']),
+    help= "'default':chr start end state1_value state2_value, etc. "
+    "'epilogos': chr start end state1_value state2_value ... stateN_value "
+    "'qcat': chr start end id:1234,qcat:[[state1_value, state1], ..., [stateN_value, stateN]] "
     "'states': chr start end state_name; "
+    "'continuous': chr start end [category1_num, category2_num, ...]"
     "'categorical': chr start end [category1_num, category2_num, ...]",
     default='default'
 )
@@ -569,8 +707,8 @@ def _bedgraph_to_multivec(
 )
 @click.option(
     '--method',
-    help='The method used to aggregate values (e.g. sum, average...)',
-    type=click.Choice(['sum', 'nansum', 'logsumexp', 'mode', 'background-freqs']),
+    help='The method used to aggregate values (e.g. sum, mean...)',
+    type=click.Choice(['sum', 'nansum', 'mean', 'logsumexp', 'mode', 'background-freqs']),
     default='sum'
 )
 @click.option(
@@ -588,14 +726,21 @@ def _bedgraph_to_multivec(
 
 def bedfile_to_multivec(filepaths, output_file, assembly, chromosome_col,
                         from_pos_col, to_pos_col, value_col, has_header,
-                        chunk_size, nan_value,
+                        chunk_size, nan_value, nan_value_threshold, decrease_mode_bin_span_per_zoom_level,
                         chromsizes_filename,
                         starting_resolution, num_rows,
                         format, row_infos_filename, category_infos_filename, background_freqs_filename,
                         tile_size, method, bin_span, bin_fill):
+    print('{}'.format('\n'.join([str(x) for x in [filepaths, output_file, assembly, chromosome_col,
+                        from_pos_col, to_pos_col, value_col, has_header,
+                        chunk_size, nan_value, nan_value_threshold, decrease_mode_bin_span_per_zoom_level,
+                        chromsizes_filename,
+                        starting_resolution, num_rows,
+                        format, row_infos_filename, category_infos_filename, background_freqs_filename,
+                        tile_size, method, bin_span, bin_fill]])))
     _bedgraph_to_multivec(filepaths, output_file, assembly, chromosome_col,
                           from_pos_col, to_pos_col, value_col, has_header,
-                          chunk_size, nan_value,
+                          chunk_size, nan_value, nan_value_threshold, decrease_mode_bin_span_per_zoom_level,
                           chromsizes_filename, starting_resolution, num_rows,
                           format, row_infos_filename, category_infos_filename, background_freqs_filename,
                           tile_size, method, bin_span, bin_fill)
