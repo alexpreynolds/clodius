@@ -196,14 +196,20 @@ def mode(ndarray, axis=0, nan_value=None, nan_value_threshold=None):
     # Check inputs
     ndarray = np.asarray(ndarray)
     ndim = ndarray.ndim
+    
     if ndarray.size == 1:
-        return (ndarray[0], 1)
+      return (ndarray[0], 1)
     elif ndarray.size == 0:
-        raise Exception('Cannot compute mode on an empty array')
-    try:
-        axis = range(ndarray.ndim)[axis]
-    except:
-        raise Exception('Axis "{}" incompatible with the {}-dimension array'.format(axis, ndim))
+      return (nan_value, 0)
+    
+    #if ndarray.size == 1:
+    #    return (ndarray[0], 1)
+    #elif ndarray.size == 0:
+    #    raise Exception('Cannot compute mode on an empty array')
+    #try:
+    #    axis = range(ndarray.ndim)[axis]
+    #except:
+    #    raise Exception('Axis "{}" incompatible with the {}-dimension array'.format(axis, ndim))
 
     # If array is 1-D and numpy version is > 1.9 numpy.unique will suffice
     if all([ndim == 1,
@@ -247,8 +253,11 @@ def mode(ndarray, axis=0, nan_value=None, nan_value_threshold=None):
     del slices[axis]
     index = np.ogrid[slices]
     index.insert(axis, np.argmax(counts, axis=axis)) 
+    
+    return sort[(index)], counts[(index)]
+    
     if not nan_value:
-      return sort[index], counts[index]      
+      return sort[(index)], counts[(index)]      
     else:
       '''
       If a nan_value is specified, then we want to try to avoid selecting 
@@ -260,7 +269,10 @@ def mode(ndarray, axis=0, nan_value=None, nan_value_threshold=None):
       index value.
       '''
       nan_value = int(nan_value)
-      nan_value_threshold = int(nan_value_threshold)
+      try:
+        nan_value_threshold = int(nan_value_threshold)
+      except TypeError:
+        nan_value_threshold = None
       nan_indices_in_sort_values = np.where(sort[index] == nan_value)[0]
       '''
       If nan_value_threshold is specified, we allow promotion of a NaN if
@@ -285,7 +297,8 @@ def mode(ndarray, axis=0, nan_value=None, nan_value_threshold=None):
           replacements = fixed_slice[row_idx, col_idx]
           np.put(fixed_sort, nan_indices_in_sort_values, replacements)
           np.put(fixed_counts, nan_indices_in_sort_values, -1)
-          return fixed_sort[index], fixed_counts[index]
+          #return fixed_sort[index], fixed_counts[index]
+          return fixed_sort, fixed_counts
         except (ValueError, IndexError):
           return sort[index], counts[index]
 
@@ -511,7 +524,25 @@ def _bedgraph_to_multivec(
                     if y.shape[1] % 2 == 0:
                         res[ri,] = y.T[y.shape[1]-1,]
                     else:
-                        res[ri,] = mode(y, 1, nan_value, nan_value_threshold)[0]
+                        #res[ri,] = mode(y, 1, nan_value, nan_value_threshold)[0]
+                        yl = list(y)
+                        ml = []
+                        for li, lv in enumerate(yl):
+                          lvs = np.extract(lv != float(nan_value), lv)
+                          ml.append(mode(lvs, nan_value=nan_value)[0])
+                          #sys.stderr.write('l:r {}:{}\n'.format(l, r))
+                          #sys.stderr.write('lv {}\n'.format(lv))
+                          #sys.stderr.write('lvs {}\n'.format(lvs))
+                          #sys.stderr.write('ml {}\n'.format(ml))
+                          #sys.exit(-1)
+                          #try:
+                          #  y[li] = ss.mode(lv[lv != nan_value])[0]
+                          #except ValueError:
+                          #  y[li] = [nan_value]
+                          #if y[li].size == 0:
+                          #  y[li] = [nan_value]
+                        #res[ri,] = np.ndarray.flatten(np.asarray(y))
+                        res[ri,] = np.asarray(ml)
                     assert(res[ri,].shape[0] == cols)
                     ri += 1
                 return res
